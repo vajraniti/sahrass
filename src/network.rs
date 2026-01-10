@@ -8,6 +8,7 @@ use scraper::{Html, Selector};
 use std::sync::Arc;
 use std::time::Duration;
 use thiserror::Error;
+use chrono::{Local};
 
 /// Network operation errors
 #[derive(Error, Debug)]
@@ -36,15 +37,15 @@ pub enum FetchError {
 pub struct NewsItem {
     pub title: String,
     pub link: Option<String>,
-    pub timestamp: Option<String>,
+    pub time_str: String,
 }
 
 impl NewsItem {
-    fn new(title: String) -> Self {
+    fn new(title: String, time_str: String) -> Self {
         Self {
             title,
             link: None,
-            timestamp: None,
+            time_str,
         }
     }
 
@@ -156,7 +157,17 @@ impl NewsEngine {
         let document = Html::parse_document(html);
         let mut items = Vec::new();
 
-        for element in document.select(&self.tg_wrap_selector).take(limits::MAX_ITEMS_PER_SOURCE) {
+        // Telegram Web shows messages Top -> Bottom (Old -> New).
+        // We take the last N items to get the newest ones.
+
+        let elements: Vec<_> = document.select(&self.tg_wrap_selector).collect();
+        let start_index = if elements.len() > limits::MAX_ITEMS_PER_SOURCE {
+            elements.len() - limits::MAX_ITEMS_PER_SOURCE
+        } else {
+            0
+        };
+
+        for element in elements.into_iter().skip(start_index) {
             // Extract text
             let text = if let Some(text_el) = element.select(&self.tg_text_selector).next() {
                 text_el.text().collect::<String>()
@@ -169,14 +180,19 @@ impl NewsEngine {
                 continue;
             }
 
-            // Extract link from date element
-            let link = element
-                .select(&self.tg_date_selector)
-                .next()
-                .and_then(|el| el.value().attr("href"))
-                .map(|s| s.to_string());
+            // Extract link and time from date element
+            let mut link = None;
+            let mut time_str = "--:--".to_string();
 
-            items.push(NewsItem::new(cleaned).with_link(link));
+            if let Some(date_el) = element.select(&self.tg_date_selector).next() {
+                link = date_el.value().attr("href").map(|s| s.to_string());
+                let raw_time = date_el.text().collect::<String>();
+                if !raw_time.is_empty() {
+                    time_str = raw_time;
+                }
+            }
+
+            items.push(NewsItem::new(cleaned, time_str).with_link(link));
         }
 
         if items.is_empty() {
@@ -207,7 +223,7 @@ impl NewsEngine {
         let feed = feed_rs::parser::parse(bytes)
             .map_err(|e| FetchError::Parse(e.to_string()))?;
 
-        let items: Vec<NewsItem> = feed
+        let mut items: Vec<NewsItem> = feed
             .entries
             .into_iter()
             .take(limits::MAX_ITEMS_PER_SOURCE)
@@ -220,13 +236,23 @@ impl NewsEngine {
                 }
 
                 let link = entry.links.first().map(|l| l.href.clone());
-                Some(NewsItem::new(cleaned).with_link(link))
+
+                // Format time: HH:MM
+                let time_str = entry.published
+                    .or(entry.updated)
+                    .map(|dt| dt.with_timezone(&Local).format("%H:%M").to_string())
+                    .unwrap_or_else(|| "--:--".to_string());
+
+                Some(NewsItem::new(cleaned, time_str).with_link(link))
             })
             .collect();
 
         if items.is_empty() {
             return Err(FetchError::Empty);
         }
+
+        // Reverse to get Chronological Order (Oldest -> Newest)
+        items.reverse();
 
         Ok(items)
     }
@@ -244,19 +270,28 @@ impl NewsEngine {
     }
 }
 
-/// Format fetch results for Telegram message (Gothic Style)
+/// Format fetch results for Telegram message (Gothic Style V2)
 pub fn format_results(source_name: &str, items: &[NewsItem]) -> String {
-    // Gothic header
+    // Header
     let mut output = format!("🏴 *{}*\n", escape_markdown(source_name));
 
     for item in items.iter() {
         let text = truncate_text(&item.title, limits::MAX_TEXT_LENGTH);
-        output.push_str(&format!("▪️ {}", escape_markdown(&text)));
 
-        // Add link if available
+        // Block 1: The Content
+        // ▪️ Some news text goes here...
+        output.push_str(&format!("\n▪️ {}\n", escape_markdown(&text)));
+
+        // Block 2: The Metadata Footer (Indented)
+        // └ 🕷 14:05 ⛓️ Link
+        output.push_str("   └ 🕷 `");
+        output.push_str(&escape_markdown(&item.time_str));
+        output.push_str("`");
+
         if let Some(link) = &item.link {
-            output.push_str(&format!(" [⛓️]({})", link));
+            output.push_str(&format!("  ⛓️ [Link]({})", link));
         }
+
         output.push('\n');
     }
 
@@ -275,8 +310,10 @@ fn escape_markdown(text: &str) -> String {
         .replace('[', "\\[")
         .replace(']', "\\]")
         .replace('`', "\\`")
-        .replace('(', "\\(") // Link parens
+        .replace('(', "\\(")
         .replace(')', "\\)")
+    // Telegram MarkdownV2 requires escaping these too usually, but for standard Markdown
+    // in Teloxide, the above are the critical ones.
 }
 
 /// Convenience function to create Arc-wrapped engine

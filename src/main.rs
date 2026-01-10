@@ -171,8 +171,8 @@ async fn handle_command(
     let _ = bot.delete_message(chat_id, loading_msg.id).await;
 
     // Send results (split if too long)
+    // We use 4000 as limit to be safe (TG limit is 4096)
     if response.len() > 4000 {
-        // Split into chunks for long messages
         for chunk in split_message(&response, 4000) {
             bot.send_message(chat_id, chunk)
                 .parse_mode(ParseMode::Markdown)
@@ -189,26 +189,39 @@ async fn handle_command(
     Ok(())
 }
 
-/// Split message into chunks at line boundaries
+/// Split message into chunks safely handling UTF-8 boundaries
 fn split_message(text: &str, max_len: usize) -> Vec<&str> {
     let mut chunks = Vec::new();
     let mut start = 0;
 
     while start < text.len() {
-        let end = (start + max_len).min(text.len());
+        let mut end = start + max_len;
 
-        // Find last newline before end
-        let chunk_end = if end == text.len() {
-            end
-        } else {
-            text[start..end]
-                .rfind('\n')
-                .map(|pos| start + pos + 1)
-                .unwrap_or(end)
-        };
+        // 1. Check bounds
+        if end >= text.len() {
+            chunks.push(&text[start..]);
+            break;
+        }
 
-        chunks.push(&text[start..chunk_end]);
-        start = chunk_end;
+        // 2. IMPORTANT: Backtrack to valid UTF-8 char boundary
+        while !text.is_char_boundary(end) {
+            end -= 1;
+        }
+
+        // 3. Try to break at newline to avoid cutting sentences
+        // look back from 'end' up to 'start' to find a newline
+        let search_range = &text[start..end];
+        if let Some(last_newline) = search_range.rfind('\n') {
+            // If newline is found reasonably close to the end, split there
+            // Ensure we don't get stuck in an infinite loop if newline is at index 0
+            let split_idx = start + last_newline + 1; // +1 to include newline
+            if split_idx > start {
+                end = split_idx;
+            }
+        }
+
+        chunks.push(&text[start..end]);
+        start = end;
     }
 
     chunks
