@@ -1,6 +1,6 @@
 //! Business logic layer - Target resolution and aggregation
 
-use crate::consts::{find_source, limits, sources_by_category, Category, Source};
+use crate::consts::{find_source, sources_by_category, Category, Source};
 use crate::network::{format_error, format_results, NewsEngine};
 use std::sync::Arc;
 
@@ -28,7 +28,7 @@ impl Target {
     pub fn display_name(&self) -> String {
         match self {
             Target::Category(cat) => cat.to_string(),
-            Target::Source(name) => format!("📰 {}", name),
+            Target::Source(name) => format!("🕷 {}", name),
         }
     }
 }
@@ -44,12 +44,12 @@ pub struct AggregatedNews {
 /// Fetch news for a target with aggregation
 pub async fn fetch_target(engine: Arc<NewsEngine>, target: Target) -> AggregatedNews {
     let sources = target.resolve();
-    let header = format!("{} News Feed", target.display_name());
+    let header = format!("{} Feed", target.display_name());
 
     if sources.is_empty() {
         return AggregatedNews {
             header,
-            content: "❌ No sources found".to_string(),
+            content: "🕸 No sources found".to_string(),
             success_count: 0,
             error_count: 1,
         };
@@ -84,28 +84,28 @@ pub async fn fetch_target(engine: Arc<NewsEngine>, target: Target) -> Aggregated
 
 /// Build help message
 pub fn build_help_message() -> &'static str {
-    r#"📰 *LOGOS News Aggregator*
+    r#"👁‍🗨 *LOGOS News Aggregator*
 
-*Category Commands:*
-/global — 🌍 Global news (Reuters, Kommersant, AlJazeera)
-/war — ⚔️ War updates (DeepState, TASS, Monitor)
-/market — 📈 Market news (Bloomberg, ProFinance, TreeOfAlpha)
+*Categories:*
+/global — 🖤 Global (RBC, Kommersant, AlJazeera)
+/war — 🤍 War (DeepState, TASS, Monitor)
+/market — 🏴 Market (Bloomberg, MarketTwits, Tree)
 
-*Individual Source Commands:*
-🌍 `/reuters` `/kommersant` `/aljazeera`
-⚔️ `/deepstate` `/tass` `/monitor`
-📈 `/bloomberg` `/profinance` `/tree`
+*Sources:*
+🖤 `/rbc` `/kommersant` `/aljazeera`
+🤍 `/deepstate` `/tass` `/monitor`
+🏴 `/bloomberg` `/markettwits` `/tree`
 
-*Other:*
-/start, /help — Show this message
+*System:*
+/start, /help — Info
 
-_Powered by Rust 🦀_"#
+_Rust 🦀_"#
 }
 
 /// Build summary line
 pub fn build_summary(result: &AggregatedNews) -> String {
     format!(
-        "\n───────────────────\n✅ {} sources | ❌ {} failed",
+        "\n───────────────────\n👁‍🗨 {} active | 🕸 {} dead",
         result.success_count, result.error_count
     )
 }
@@ -124,7 +124,7 @@ pub mod routes {
             "market" => Some(Target::Category(Category::Market)),
 
             // Individual sources - Global
-            "reuters" => Some(Target::Source("Reuters")),
+            "rbc" => Some(Target::Source("RBC")),
             "kommersant" => Some(Target::Source("Kommersant")),
             "aljazeera" => Some(Target::Source("AlJazeera")),
 
@@ -135,7 +135,7 @@ pub mod routes {
 
             // Individual sources - Market
             "bloomberg" => Some(Target::Source("Bloomberg")),
-            "profinance" => Some(Target::Source("ProFinance")),
+            "markettwits" => Some(Target::Source("MarketTwits")),
             "tree" => Some(Target::Source("TreeOfAlpha")),
 
             _ => None,

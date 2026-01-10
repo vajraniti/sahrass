@@ -23,9 +23,9 @@ pub enum Category {
 impl fmt::Display for Category {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Category::Global => write!(f, "🌍 Global"),
-            Category::War => write!(f, "⚔️ War"),
-            Category::Market => write!(f, "📈 Market"),
+            Category::Global => write!(f, "🖤 Global"),
+            Category::War => write!(f, "🤍 War"),
+            Category::Market => write!(f, "🏴 Market"),
         }
     }
 }
@@ -53,29 +53,29 @@ impl Source {
 /// Static source registry - compile-time constant, zero heap allocation
 pub static SOURCES: &[Source] = &[
     // ═══════════════════════════════════════════════════════════════════
-    // GLOBAL NEWS
+    // GLOBAL NEWS (🖤)
     // ═══════════════════════════════════════════════════════════════════
     Source::new(
-        "Reuters",
-        "https://feeds.reuters.com/reuters/topNews",
-        SourceType::Rss,
+        "RBC",
+        "https://t.me/s/rbc_news",
+        SourceType::TelegramHtml,
         Category::Global,
     ),
     Source::new(
         "Kommersant",
-        "https://www.kommersant.ru/RSS/news.xml",
-        SourceType::Rss,
+        "https://t.me/s/kommersant",
+        SourceType::TelegramHtml,
         Category::Global,
     ),
     Source::new(
         "AlJazeera",
-        "https://www.aljazeera.com/xml/rss/all.xml",
-        SourceType::Rss,
+        "https://t.me/s/aljazeeraenglishnews",
+        SourceType::TelegramHtml,
         Category::Global,
     ),
 
     // ═══════════════════════════════════════════════════════════════════
-    // WAR / GEOPOLITICS
+    // WAR / GEOPOLITICS (🤍)
     // ═══════════════════════════════════════════════════════════════════
     Source::new(
         "DeepState",
@@ -85,8 +85,8 @@ pub static SOURCES: &[Source] = &[
     ),
     Source::new(
         "TASS",
-        "https://tass.com/rss/v2.xml",
-        SourceType::Rss,
+        "https://t.me/s/tass_agency",
+        SourceType::TelegramHtml,
         Category::War,
     ),
     Source::new(
@@ -97,7 +97,7 @@ pub static SOURCES: &[Source] = &[
     ),
 
     // ═══════════════════════════════════════════════════════════════════
-    // MARKET / FINANCE
+    // MARKET / FINANCE (🏴)
     // ═══════════════════════════════════════════════════════════════════
     Source::new(
         "Bloomberg",
@@ -106,9 +106,9 @@ pub static SOURCES: &[Source] = &[
         Category::Market,
     ),
     Source::new(
-        "ProFinance",
-        "https://www.profinance.ru/rss/news.xml",
-        SourceType::Rss,
+        "MarketTwits",
+        "https://t.me/s/markettwits",
+        SourceType::TelegramHtml,
         Category::Market,
     ),
     Source::new(
@@ -145,8 +145,9 @@ pub mod headers {
 
 /// CSS selectors for Telegram HTML parsing
 pub mod selectors {
+    pub const TG_MESSAGE_WRAP: &str = ".tgme_widget_message_wrap";
     pub const TG_MESSAGE_TEXT: &str = ".tgme_widget_message_text";
-    pub const TG_MESSAGE_DATE: &str = ".tgme_widget_message_date time";
+    pub const TG_MESSAGE_DATE: &str = ".tgme_widget_message_date";
 }
 
 /// Limits and thresholds

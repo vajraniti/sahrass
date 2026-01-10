@@ -57,7 +57,8 @@ impl NewsItem {
 /// High-performance news fetching engine
 pub struct NewsEngine {
     client: Client,
-    tg_selector: Selector,
+    tg_wrap_selector: Selector,
+    tg_text_selector: Selector,
     tg_date_selector: Selector,
 }
 
@@ -77,8 +78,10 @@ impl NewsEngine {
 
         Arc::new(Self {
             client,
-            tg_selector: Selector::parse(selectors::TG_MESSAGE_TEXT)
-                .expect("Invalid TG message selector"),
+            tg_wrap_selector: Selector::parse(selectors::TG_MESSAGE_WRAP)
+                .expect("Invalid TG wrap selector"),
+            tg_text_selector: Selector::parse(selectors::TG_MESSAGE_TEXT)
+                .expect("Invalid TG text selector"),
             tg_date_selector: Selector::parse(selectors::TG_MESSAGE_DATE)
                 .expect("Invalid TG date selector"),
         })
@@ -151,17 +154,30 @@ impl NewsEngine {
     /// Parse Telegram HTML structure
     fn parse_telegram_html(&self, html: &str) -> Result<Vec<NewsItem>, FetchError> {
         let document = Html::parse_document(html);
+        let mut items = Vec::new();
 
-        let items: Vec<NewsItem> = document
-            .select(&self.tg_selector)
-            .take(limits::MAX_ITEMS_PER_SOURCE)
-            .map(|el| {
-                let text = el.text().collect::<String>();
-                let cleaned = clean_text(&text);
-                NewsItem::new(cleaned)
-            })
-            .filter(|item| !item.title.is_empty())
-            .collect();
+        for element in document.select(&self.tg_wrap_selector).take(limits::MAX_ITEMS_PER_SOURCE) {
+            // Extract text
+            let text = if let Some(text_el) = element.select(&self.tg_text_selector).next() {
+                text_el.text().collect::<String>()
+            } else {
+                continue;
+            };
+
+            let cleaned = clean_text(&text);
+            if cleaned.is_empty() {
+                continue;
+            }
+
+            // Extract link from date element
+            let link = element
+                .select(&self.tg_date_selector)
+                .next()
+                .and_then(|el| el.value().attr("href"))
+                .map(|s| s.to_string());
+
+            items.push(NewsItem::new(cleaned).with_link(link));
+        }
 
         if items.is_empty() {
             return Err(FetchError::Empty);
@@ -228,13 +244,20 @@ impl NewsEngine {
     }
 }
 
-/// Format fetch results for Telegram message
+/// Format fetch results for Telegram message (Gothic Style)
 pub fn format_results(source_name: &str, items: &[NewsItem]) -> String {
-    let mut output = format!("📌 *{}*\n", escape_markdown(source_name));
+    // Gothic header
+    let mut output = format!("🏴 *{}*\n", escape_markdown(source_name));
 
-    for (i, item) in items.iter().enumerate() {
+    for item in items.iter() {
         let text = truncate_text(&item.title, limits::MAX_TEXT_LENGTH);
-        output.push_str(&format!("{}. {}\n", i + 1, escape_markdown(&text)));
+        output.push_str(&format!("▪️ {}", escape_markdown(&text)));
+
+        // Add link if available
+        if let Some(link) = &item.link {
+            output.push_str(&format!(" [⛓️]({})", link));
+        }
+        output.push('\n');
     }
 
     output
@@ -242,7 +265,7 @@ pub fn format_results(source_name: &str, items: &[NewsItem]) -> String {
 
 /// Format error for Telegram message
 pub fn format_error(source_name: &str, error: &FetchError) -> String {
-    format!("❌ *{}*: {}\n", escape_markdown(source_name), error)
+    format!("🕸 *{}*: {}\n", escape_markdown(source_name), error)
 }
 
 /// Escape special Markdown characters for Telegram
@@ -252,6 +275,8 @@ fn escape_markdown(text: &str) -> String {
         .replace('[', "\\[")
         .replace(']', "\\]")
         .replace('`', "\\`")
+        .replace('(', "\\(") // Link parens
+        .replace(')', "\\)")
 }
 
 /// Convenience function to create Arc-wrapped engine

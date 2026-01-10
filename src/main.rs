@@ -27,16 +27,16 @@ enum Command {
     Help,
 
     // Category commands
-    #[command(description = "🌍 Global news")]
+    #[command(description = "🖤 Global news")]
     Global,
-    #[command(description = "⚔️ War updates")]
+    #[command(description = "🤍 War updates")]
     War,
-    #[command(description = "📈 Market news")]
+    #[command(description = "🏴 Market news")]
     Market,
 
     // Individual source commands - Global
-    #[command(description = "Reuters feed")]
-    Reuters,
+    #[command(description = "RBC feed")]
+    Rbc,
     #[command(description = "Kommersant feed")]
     Kommersant,
     #[command(description = "AlJazeera feed")]
@@ -53,8 +53,8 @@ enum Command {
     // Individual source commands - Market
     #[command(description = "Bloomberg breaking")]
     Bloomberg,
-    #[command(description = "ProFinance feed")]
-    Profinance,
+    #[command(description = "MarketTwits feed")]
+    Markettwits,
     #[command(description = "Tree of Alpha feed")]
     Tree,
 }
@@ -67,14 +67,14 @@ impl Command {
             Command::Global => "global",
             Command::War => "war",
             Command::Market => "market",
-            Command::Reuters => "reuters",
+            Command::Rbc => "rbc",
             Command::Kommersant => "kommersant",
             Command::Aljazeera => "aljazeera",
             Command::Deepstate => "deepstate",
             Command::Tass => "tass",
             Command::Monitor => "monitor",
             Command::Bloomberg => "bloomberg",
-            Command::Profinance => "profinance",
+            Command::Markettwits => "markettwits",
             Command::Tree => "tree",
         };
         routes::resolve_command(cmd_str)
@@ -103,28 +103,7 @@ async fn main() {
     let token = match env::var("TELOXIDE_TOKEN") {
         Ok(t) => t,
         Err(_) => {
-            log::error!("═══════════════════════════════════════════");
-            log::error!("  ERROR: TELOXIDE_TOKEN not set!");
-            log::error!("  Tip: put TELOXIDE_TOKEN in your shell env OR create a .env file in project root:");
-            log::error!("       TELOXIDE_TOKEN=123456:ABC...");
-            log::error!("═══════════════════════════════════════════");
-            log::error!("");
-            log::error!("  To run this bot, you need a Telegram Bot Token.");
-            log::error!("");
-            log::error!("  1. Message @BotFather on Telegram");
-            log::error!("  2. Send /newbot and follow instructions");
-            log::error!("  3. Copy the token and run:");
-            log::error!("");
-            log::error!("     Windows (CMD):");
-            log::error!("       set TELOXIDE_TOKEN=your_token_here");
-            log::error!("");
-            log::error!("     Windows (PowerShell):");
-            log::error!("       $env:TELOXIDE_TOKEN=\"your_token_here\"");
-            log::error!("");
-            log::error!("     Linux/macOS:");
-            log::error!("       export TELOXIDE_TOKEN=your_token_here");
-            log::error!("");
-            log::error!("═══════════════════════════════════════════");
+            log::error!("Token not found!");
             std::process::exit(1);
         }
     };
@@ -158,13 +137,6 @@ async fn handle_command(
 ) -> ResponseResult<()> {
     let chat_id = msg.chat.id;
 
-    log::info!(
-        "Command: {:?} from user {} in chat {}",
-        cmd,
-        msg.from().map(|u| u.id.0).unwrap_or(0),
-        chat_id
-    );
-
     // Handle help commands
     if matches!(cmd, Command::Start | Command::Help) {
         bot.send_message(chat_id, build_help_message())
@@ -177,7 +149,7 @@ async fn handle_command(
     let target = match cmd.to_target() {
         Some(t) => t,
         None => {
-            bot.send_message(chat_id, "❌ Unknown command")
+            bot.send_message(chat_id, "🕷 Unknown command")
                 .await?;
             return Ok(());
         }
