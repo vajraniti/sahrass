@@ -1,0 +1,25 @@
+[package]
+name = "logos_bot"
+version = "0.1.0"
+edition = "2021"
+authors = ["Logos Team"]
+description = "High-performance async Telegram bot for news aggregation"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[dependencies]
+teloxide = { version = "0.12", features = ["macros"] }
+tokio = { version = "1.34", features = ["rt-multi-thread", "macros", "time"] }
+reqwest = { version = "0.11", default-features = false, features = ["rustls-tls", "gzip", "brotli"] }
+scraper = "0.18"
+feed-rs = "1.4"
+rand = "0.8"
+log = "0.4"
+pretty_env_logger = "0.5"
+thiserror = "1.0"
+dotenvy = "0.15"
