@@ -17,6 +17,7 @@ pub enum Category {
     Global,
     War,
     Market,
+    Commodities,
 }
 
 impl fmt::Display for Category {
@@ -25,6 +26,7 @@ impl fmt::Display for Category {
             Category::Global => write!(f, "🖤 Global"),
             Category::War => write!(f, "🤍 War"),
             Category::Market => write!(f, "🏴 Market"),
+            Category::Commodities => write!(f, "💀 Commodities"), // Replaced Cup with Skull
         }
     }
 }
@@ -54,7 +56,8 @@ pub static SOURCES: &[Source] = &[
     // ═══════════════════════════════════════════════════════════════════
     // GLOBAL NEWS (🖤)
     // ═══════════════════════════════════════════════════════════════════
-    Source::new("RBC", "https://t.me/s/rbc_news", SourceType::TelegramHtml, Category::Global),
+    // Switched RBC -> Reuters Agency Feed (Cleaner, reliable)
+    Source::new("Reuters", "https://www.reutersagency.com/feed/?best-topics=political-general&post_type=best", SourceType::Rss, Category::Global),
     Source::new("Kommersant", "https://t.me/s/kommersant", SourceType::TelegramHtml, Category::Global),
     Source::new("AlJazeera", "https://www.aljazeera.com/xml/rss/all.xml", SourceType::Rss, Category::Global),
 
@@ -63,8 +66,8 @@ pub static SOURCES: &[Source] = &[
     // ═══════════════════════════════════════════════════════════════════
     Source::new("DeepState", "https://t.me/s/DeepStateUA", SourceType::TelegramHtml, Category::War),
     Source::new("TASS", "https://t.me/s/tass_agency", SourceType::TelegramHtml, Category::War),
-    // Changed Monitor -> UkraineNow because Monitor is often restricted in Web View
-    Source::new("UkraineNow", "https://t.me/s/u_now", SourceType::TelegramHtml, Category::War),
+    // Switched UkraineNow -> Liveuamap
+    Source::new("Liveuamap", "https://t.me/s/liveuamap", SourceType::TelegramHtml, Category::War),
 
     // ═══════════════════════════════════════════════════════════════════
     // MARKET / FINANCE (🏴)
@@ -72,6 +75,13 @@ pub static SOURCES: &[Source] = &[
     Source::new("Bloomberg", "https://t.me/s/bbbreaking", SourceType::TelegramHtml, Category::Market),
     Source::new("MarketTwits", "https://t.me/s/markettwits", SourceType::TelegramHtml, Category::Market),
     Source::new("TreeOfAlpha", "https://t.me/s/TreeNewsFeed", SourceType::TelegramHtml, Category::Market),
+
+    // ═══════════════════════════════════════════════════════════════════
+    // COMMODITIES / DEAD ASSETS (💀)
+    // ═══════════════════════════════════════════════════════════════════
+    // Using Google News RSS specific queries to get the latest "Rate" news
+    Source::new("Gold", "https://news.google.com/rss/search?q=Gold+Price+USD&hl=en-US&gl=US&ceid=US:en", SourceType::Rss, Category::Commodities),
+    Source::new("Oil", "https://news.google.com/rss/search?q=Brent+Crude+Oil+Price&hl=en-US&gl=US&ceid=US:en", SourceType::Rss, Category::Commodities),
 ];
 
 #[inline]

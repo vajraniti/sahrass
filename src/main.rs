@@ -34,10 +34,12 @@ enum Command {
     War,
     #[command(description = "🏴 Market news")]
     Market,
+    #[command(description = "💀 Commodities prices")]
+    Commodities,
 
     // Individual source commands - Global
-    #[command(description = "RBC feed")]
-    Rbc,
+    #[command(description = "Reuters feed")]
+    Reuters,
     #[command(description = "Kommersant feed")]
     Kommersant,
     #[command(description = "AlJazeera feed")]
@@ -48,8 +50,8 @@ enum Command {
     Deepstate,
     #[command(description = "TASS feed")]
     Tass,
-    #[command(description = "Monitor updates")]
-    Monitor,
+    #[command(description = "Liveuamap feed")]
+    Liveuamap,
 
     // Individual source commands - Market
     #[command(description = "Bloomberg breaking")]
@@ -58,6 +60,12 @@ enum Command {
     Markettwits,
     #[command(description = "Tree of Alpha feed")]
     Tree,
+
+    // Individual source commands - Commodities
+    #[command(description = "Gold price news")]
+    Gold,
+    #[command(description = "Oil price news")]
+    Oil,
 }
 
 impl Command {
@@ -68,15 +76,18 @@ impl Command {
             Command::Global => "global",
             Command::War => "war",
             Command::Market => "market",
-            Command::Rbc => "rbc",
+            Command::Commodities => "commodities",
+            Command::Reuters => "reuters",
             Command::Kommersant => "kommersant",
             Command::Aljazeera => "aljazeera",
             Command::Deepstate => "deepstate",
             Command::Tass => "tass",
-            Command::Monitor => "monitor",
+            Command::Liveuamap => "liveuamap",
             Command::Bloomberg => "bloomberg",
             Command::Markettwits => "markettwits",
             Command::Tree => "tree",
+            Command::Gold => "gold",
+            Command::Oil => "oil",
         };
         routes::resolve_command(cmd_str)
     }

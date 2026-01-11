@@ -87,14 +87,16 @@ pub fn build_help_message() -> &'static str {
     r#"👁‍🗨 *LOGOS News Aggregator*
 
 *Categories:*
-/global — 🖤 Global (RBC, Kommersant, AlJazeera)
-/war — 🤍 War (DeepState, TASS, Monitor)
+/global — 🖤 Global (Reuters, Kommersant, AlJazeera)
+/war — 🤍 War (DeepState, TASS, Liveuamap)
 /market — 🏴 Market (Bloomberg, MarketTwits, Tree)
+/commodities — 💀 Commodities (Gold, Oil)
 
 *Sources:*
-🖤 `/rbc` `/kommersant` `/aljazeera`
-🤍 `/deepstate` `/tass` `/monitor`
+🖤 `/reuters` `/kommersant` `/aljazeera`
+🤍 `/deepstate` `/tass` `/liveuamap`
 🏴 `/bloomberg` `/markettwits` `/tree`
+💀 `/gold` `/oil`
 
 *System:*
 /start, /help — Info
@@ -122,21 +124,26 @@ pub mod routes {
             "global" => Some(Target::Category(Category::Global)),
             "war" => Some(Target::Category(Category::War)),
             "market" => Some(Target::Category(Category::Market)),
+            "commodities" => Some(Target::Category(Category::Commodities)),
 
             // Individual sources - Global
-            "rbc" => Some(Target::Source("RBC")),
+            "reuters" => Some(Target::Source("Reuters")),
             "kommersant" => Some(Target::Source("Kommersant")),
             "aljazeera" => Some(Target::Source("AlJazeera")),
 
             // Individual sources - War
             "deepstate" => Some(Target::Source("DeepState")),
             "tass" => Some(Target::Source("TASS")),
-            "monitor" => Some(Target::Source("Monitor")),
+            "liveuamap" => Some(Target::Source("Liveuamap")),
 
             // Individual sources - Market
             "bloomberg" => Some(Target::Source("Bloomberg")),
             "markettwits" => Some(Target::Source("MarketTwits")),
             "tree" => Some(Target::Source("TreeOfAlpha")),
+
+            // Individual sources - Commodities
+            "gold" => Some(Target::Source("Gold")),
+            "oil" => Some(Target::Source("Oil")),
 
             _ => None,
         }
