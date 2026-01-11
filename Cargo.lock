@@ -971,6 +971,7 @@ dependencies = [
  "log",
  "pretty_env_logger",
  "rand",
+ "regex",
  "reqwest",
  "scraper",
  "serde",

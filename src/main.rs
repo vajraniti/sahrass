@@ -1,8 +1,5 @@
 //! LOGOS - High-performance Telegram News Aggregator
-//!
 //! Architecture: Modular async design with Arc-based shared state
-//! Runtime: Tokio multi-threaded
-//! Bot Framework: Teloxide
 
 mod consts;
 mod logic;
@@ -34,42 +31,35 @@ enum Command {
     War,
     #[command(description = "🏴 Market news")]
     Market,
-    #[command(description = "💀 Commodities prices")]
+    #[command(description = "✟ Ancient Dust")]
     Commodities,
 
-    // Individual source commands - Global
-    #[command(description = "Reuters feed")]
+    // Individual source commands
+    #[command(description = "Reuters NewsData")]
     Reuters,
     #[command(description = "Kommersant feed")]
     Kommersant,
     #[command(description = "AlJazeera feed")]
     Aljazeera,
-
-    // Individual source commands - War
     #[command(description = "DeepState updates")]
     Deepstate,
     #[command(description = "TASS feed")]
     Tass,
     #[command(description = "Liveuamap feed")]
     Liveuamap,
-
-    // Individual source commands - Market
     #[command(description = "Bloomberg breaking")]
     Bloomberg,
     #[command(description = "MarketTwits feed")]
     Markettwits,
     #[command(description = "Tree of Alpha feed")]
     Tree,
-
-    // Individual source commands - Commodities
-    #[command(description = "Gold price news")]
+    #[command(description = "Gold price")]
     Gold,
-    #[command(description = "Oil price news")]
+    #[command(description = "Oil price")]
     Oil,
 }
 
 impl Command {
-    /// Convert command to fetch target
     fn to_target(&self) -> Option<Target> {
         let cmd_str = match self {
             Command::Start | Command::Help => return None,
@@ -93,54 +83,30 @@ impl Command {
     }
 }
 
-/// Application entry point
 #[tokio::main]
 async fn main() {
-    // Load .env (TELOXIDE_TOKEN=...) from project root if present
     dotenvy::dotenv().ok();
 
-    // Initialize logging
     pretty_env_logger::formatted_builder()
         .filter_level(log::LevelFilter::Info)
-        .filter_module("teloxide", log::LevelFilter::Warn)
-        .filter_module("reqwest", log::LevelFilter::Warn)
         .init();
 
     log::info!("═══════════════════════════════════════════");
-    log::info!("  LOGOS News Aggregator v0.1.0");
-    log::info!("  Initializing...");
+    log::info!("  LOGOS SYSTEM ONLINE. FILTERING AETHER...");
     log::info!("═══════════════════════════════════════════");
 
-    // Check for bot token
-    let token = match env::var("TELOXIDE_TOKEN") {
-        Ok(t) => t,
-        Err(_) => {
-            log::error!("Token not found!");
-            std::process::exit(1);
-        }
-    };
-
-    // Initialize bot with token
+    let token = env::var("TELOXIDE_TOKEN").expect("TELOXIDE_TOKEN not found!");
     let bot = Bot::new(token);
-
-    // Initialize shared news engine (Arc for cheap cloning)
     let engine = NewsEngine::new();
 
-    log::info!("Bot initialized, starting command handler...");
-
-    // Command handler with move closure for ownership
     Command::repl(bot, move |bot: Bot, msg: Message, cmd: Command| {
-        // Clone Arc (cheap reference count increment)
         let engine = Arc::clone(&engine);
-
         async move {
             handle_command(bot, msg, cmd, engine).await
         }
-    })
-        .await;
+    }).await;
 }
 
-/// Handle incoming command
 async fn handle_command(
     bot: Bot,
     msg: Message,
@@ -149,51 +115,42 @@ async fn handle_command(
 ) -> ResponseResult<()> {
     let chat_id = msg.chat.id;
 
-    // Handle help commands
     if matches!(cmd, Command::Start | Command::Help) {
         bot.send_message(chat_id, build_help_message())
-            .parse_mode(ParseMode::Markdown)
+            .parse_mode(ParseMode::Markdown) // Help оставляем в MD, там нет сложных символов
             .await?;
         return Ok(());
     }
 
-    // Resolve target
     let target = match cmd.to_target() {
         Some(t) => t,
-        None => {
-            bot.send_message(chat_id, "🕷 Unknown command")
-                .await?;
-            return Ok(());
-        }
+        None => return Ok(()),
     };
 
-    // Send loading indicator
     let loading_msg = bot
         .send_message(chat_id, format!("⏳ Fetching {}...", target.display_name()))
         .await?;
 
-    // Fetch news
     let result = fetch_target(engine, target).await;
 
-    // Build response
-    let mut response = format!("*{}*\n\n{}", result.header, result.content);
+    // Используем HTML для основного вывода
+    let mut response = format!("<b>{}</b>\n\n{}", result.header, result.content);
     response.push_str(&build_summary(&result));
 
-    // Delete loading message
     let _ = bot.delete_message(chat_id, loading_msg.id).await;
 
-    // Send results (split if too long)
-    // We use 4000 as limit to be safe (TG limit is 4096)
+
+    // Send results
     if response.len() > 4000 {
         for chunk in split_message(&response, 4000) {
             bot.send_message(chat_id, chunk)
-                .parse_mode(ParseMode::Markdown)
+                .parse_mode(ParseMode::Html) // <--- ВОТ ТУТ
                 .disable_web_page_preview(true)
                 .await?;
         }
     } else {
         bot.send_message(chat_id, response)
-            .parse_mode(ParseMode::Markdown)
+            .parse_mode(ParseMode::Html) // <--- И ТУТ
             .disable_web_page_preview(true)
             .await?;
     }
@@ -221,12 +178,9 @@ fn split_message(text: &str, max_len: usize) -> Vec<&str> {
         }
 
         // 3. Try to break at newline to avoid cutting sentences
-        // look back from 'end' up to 'start' to find a newline
         let search_range = &text[start..end];
         if let Some(last_newline) = search_range.rfind('\n') {
-            // If newline is found reasonably close to the end, split there
-            // Ensure we don't get stuck in an infinite loop if newline is at index 0
-            let split_idx = start + last_newline + 1; // +1 to include newline
+            let split_idx = start + last_newline + 1;
             if split_idx > start {
                 end = split_idx;
             }

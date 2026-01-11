@@ -1,48 +1,37 @@
-//! Hybrid fetching engine with RSS and Telegram HTML support.
+//! Hybrid fetching engine with RSS, Telegram, and NewsData support.
 
-use crate::consts::{headers, limits, selectors, Source, SourceType};
-use crate::utils::{clean_text, fibonacci_delay, progressive_delay, truncate_text, is_junk};
+use crate::consts::{headers, limits, selectors, Source, SourceType, Category};
+use crate::utils::{clean_text, fibonacci_delay, truncate_text, is_junk};
 use crate::translate::translate_text;
-use reqwest::{Client, StatusCode};
+use reqwest::{Client};
 use scraper::{Html, Selector};
 use std::sync::Arc;
 use std::time::Duration;
 use thiserror::Error;
-use chrono::Local;
 use futures::future::join_all;
+use regex::Regex;
 
-/// Network operation errors
 #[derive(Error, Debug)]
 pub enum FetchError {
-    #[error("HTTP error: {0}")]
-    Http(#[from] reqwest::Error),
-    #[error("Rate limited (429)")]
-    RateLimited,
-    #[error("Forbidden (403)")]
-    Forbidden,
-    #[error("Not found (404)")]
-    NotFound,
-    #[error("Parse error: {0}")]
-    Parse(String),
-    #[error("Empty response")]
-    Empty,
+    #[error("HTTP: {0}")] Http(#[from] reqwest::Error),
+    #[error("No Key")] NoKey,
+    #[error("Empty")] Empty,
 }
 
 #[derive(Debug, Clone)]
 pub struct NewsItem {
     pub title: String,
+    pub description: Option<String>,
     pub link: Option<String>,
     pub time_str: String,
 }
 
 impl NewsItem {
     fn new(title: String, time_str: String) -> Self {
-        Self { title, link: None, time_str }
+        Self { title, description: None, link: None, time_str }
     }
-    fn with_link(mut self, link: Option<String>) -> Self {
-        self.link = link;
-        self
-    }
+    fn with_desc(mut self, desc: Option<String>) -> Self { self.description = desc; self }
+    fn with_link(mut self, link: Option<String>) -> Self { self.link = link; self }
 }
 
 pub struct NewsEngine {
@@ -57,19 +46,13 @@ impl NewsEngine {
         let client = Client::builder()
             .user_agent(headers::USER_AGENT)
             .timeout(Duration::from_secs(limits::REQUEST_TIMEOUT_SECS))
-            .connect_timeout(Duration::from_secs(10))
-            .pool_max_idle_per_host(5)
-            .gzip(true)
-            .brotli(true)
-            .redirect(reqwest::redirect::Policy::limited(3))
-            .build()
-            .expect("Failed to build HTTP client");
+            .build().unwrap();
 
         Arc::new(Self {
             client,
-            tg_wrap_selector: Selector::parse(selectors::TG_MESSAGE_WRAP).expect("Invalid selector"),
-            tg_text_selector: Selector::parse(selectors::TG_MESSAGE_TEXT).expect("Invalid selector"),
-            tg_date_selector: Selector::parse(selectors::TG_MESSAGE_DATE).expect("Invalid selector"),
+            tg_wrap_selector: Selector::parse(selectors::TG_MESSAGE_WRAP).unwrap(),
+            tg_text_selector: Selector::parse(selectors::TG_MESSAGE_TEXT).unwrap(),
+            tg_date_selector: Selector::parse(selectors::TG_MESSAGE_DATE).unwrap(),
         })
     }
 
@@ -79,171 +62,153 @@ impl NewsEngine {
         let mut items = match source.source_type {
             SourceType::TelegramHtml => self.fetch_telegram(source.url).await?,
             SourceType::Rss => self.fetch_rss(source.url).await?,
+            SourceType::NewsData => self.fetch_newsdata(source.url).await?,
         };
 
-        // Parallel Translation
-        let mut tasks = Vec::new();
-        for item in &items {
-            let client = self.client.clone();
-            let text = item.title.clone();
+        // Перевод (кроме RU источников)
+        if source.language != "ru" {
+            let mut tasks = Vec::new();
+            for item in &items {
+                let client = self.client.clone();
+                let title = item.title.clone();
+                let desc = item.description.clone();
 
-            tasks.push(tokio::spawn(async move {
-                // Translate to Russian
-                match translate_text(&client, &text, "ru").await {
-                    Ok(t) => t,
-                    Err(_) => text, // Fallback to original
+                tasks.push(tokio::spawn(async move {
+                    let t_title = translate_text(&client, &title, "ru").await.unwrap_or(title);
+                    let t_desc = if let Some(d) = desc {
+                        Some(translate_text(&client, &d, "ru").await.unwrap_or(d))
+                    } else { None };
+                    (t_title, t_desc)
+                }));
+            }
+
+            let results = join_all(tasks).await;
+            for (i, res) in results.into_iter().enumerate() {
+                if let Ok((t, d)) = res {
+                    if i < items.len() {
+                        items[i].title = t;
+                        items[i].description = d;
+                    }
                 }
-            }));
-        }
-
-        let results = join_all(tasks).await;
-
-        for (i, res) in results.into_iter().enumerate() {
-            if let Ok(translated) = res {
-                items[i].title = translated;
             }
         }
 
+        // Commodities Logic: Оставляем ТОЛЬКО ЦЕНУ
+        if source.category == Category::Commodities {
+            // Ищем паттерн: Число + Валюта (USD, $, RUB, ₽)
+            let price_regex = Regex::new(r"(?i)(\d+[.,]?\d*\s*(\$|USD|RUB|руб|₽))").unwrap();
+
+            let mut clean_items = Vec::new();
+            for mut item in items {
+                let content = format!("{} {}", item.title, item.description.as_deref().unwrap_or(""));
+
+                if let Some(caps) = price_regex.find(&content) {
+                    // Если нашли цену — перезаписываем заголовок на неё
+                    item.title = caps.as_str().to_string();
+                    item.description = None; // Убираем лишний текст
+                    clean_items.push(item);
+                }
+            }
+            items = clean_items;
+        }
+
+        if items.is_empty() { return Err(FetchError::Empty); }
         Ok(items)
     }
 
-    pub async fn fetch_with_retry(&self, source: &Source, max_attempts: u32) -> Result<Vec<NewsItem>, FetchError> {
-        let mut last_error = FetchError::Empty;
-        for attempt in 0..max_attempts {
-            if attempt > 0 { progressive_delay(limits::BASE_DELAY_MS, attempt).await; }
-            match self.fetch(source).await {
-                Ok(items) => return Ok(items),
-                Err(FetchError::RateLimited) => {
-                    progressive_delay(2000, attempt + 1).await;
-                    last_error = FetchError::RateLimited;
-                }
-                Err(e) => last_error = e,
-            }
-        }
-        Err(last_error)
-    }
+    async fn fetch_newsdata(&self, query: &str) -> Result<Vec<NewsItem>, FetchError> {
+        let api_key = std::env::var("NEWSDATA_KEY").map_err(|_| FetchError::NoKey)?;
+        // Используем endpoint latest и категорию business для отсева мусора
+        let url = format!("https://newsdata.io/api/1/latest?apikey={}&q={}&category=business&language=en", api_key, query);
 
-    async fn fetch_telegram(&self, url: &str) -> Result<Vec<NewsItem>, FetchError> {
-        let response = self.client.get(url)
-            .header("Accept", headers::ACCEPT_HTML)
-            .header("Accept-Language", headers::ACCEPT_LANG)
-            .header("Sec-Fetch-User", "?1")
-            .header("Upgrade-Insecure-Requests", "1")
-            .send().await?;
+        let res = self.client.get(&url).send().await?;
+        let data: serde_json::Value = res.json().await?;
 
-        self.check_status(&response.status())?;
-        let html = response.text().await?;
-        self.parse_telegram_html(&html)
-    }
-
-    fn parse_telegram_html(&self, html: &str) -> Result<Vec<NewsItem>, FetchError> {
-        let document = Html::parse_document(html);
         let mut items = Vec::new();
+        if let Some(results) = data.get("results").and_then(|r| r.as_array()) {
+            for entry in results.iter().take(limits::MAX_ITEMS_PER_SOURCE) {
+                let title = entry["title"].as_str().unwrap_or("No Title").to_string();
+                // NewsData: описание часто дублирует заголовок, берем если оно длиннее
+                let desc = entry["description"].as_str().map(|s| clean_text(s));
+                let link = entry["link"].as_str().map(|s| s.to_string());
+                let date = entry["pubDate"].as_str().unwrap_or("--:--").to_string();
 
-        // Select ALL message wraps available on the page
-        let elements: Vec<_> = document.select(&self.tg_wrap_selector).collect();
-
-        // Iterate backwards (from Newest to Oldest)
-        // We keep looking until we fill our buffer (MAX_ITEMS_PER_SOURCE)
-        // This solves the problem where the last 10 posts are junk/links
-        for element in elements.into_iter().rev() {
-            if items.len() >= limits::MAX_ITEMS_PER_SOURCE {
-                break;
-            }
-
-            let text = if let Some(text_el) = element.select(&self.tg_text_selector).next() {
-                text_el.text().collect::<String>()
-            } else {
-                continue;
-            };
-
-            let cleaned = clean_text(&text);
-
-            // Apply Filters
-            if cleaned.is_empty() || is_junk(&cleaned) {
-                continue;
-            }
-
-            let mut link = None;
-            let mut time_str = "--:--".to_string();
-
-            if let Some(date_el) = element.select(&self.tg_date_selector).next() {
-                link = date_el.value().attr("href").map(|s| s.to_string());
-                let raw_time = date_el.text().collect::<String>();
-                if !raw_time.is_empty() {
-                    time_str = raw_time;
+                if !is_junk(&title) {
+                    items.push(NewsItem::new(title, date).with_desc(desc).with_link(link));
                 }
             }
-            items.push(NewsItem::new(cleaned, time_str).with_link(link));
         }
-
-        if items.is_empty() {
-            // Log that we found elements but filtered them all, or found none
-            // This helps distinguish between "Banned" (0 elements) and "All Junk"
-            return Err(FetchError::Empty);
-        }
-
-        // We collected [Newest, 2nd Newest, ...].
-        // Reverse to get [Oldest, ..., Newest] for the chat
-        items.reverse();
-
+        if items.is_empty() { return Err(FetchError::Empty); }
         Ok(items)
     }
 
     async fn fetch_rss(&self, url: &str) -> Result<Vec<NewsItem>, FetchError> {
-        let response = self.client.get(url).header("Accept", headers::ACCEPT_RSS).send().await?;
-        self.check_status(&response.status())?;
-        let bytes = response.bytes().await?;
-        self.parse_rss(&bytes)
+        let res = self.client.get(url).send().await?;
+        let bytes = res.bytes().await?;
+        let feed = feed_rs::parser::parse(&bytes[..]).map_err(|_| FetchError::Empty)?;
+
+        let items = feed.entries.into_iter()
+            .take(limits::MAX_ITEMS_PER_SOURCE)
+            .filter_map(|e| {
+                let title = e.title.map(|t| t.content).unwrap_or_default();
+                if is_junk(&title) { return None; }
+                let desc = e.summary.map(|s| clean_text(&s.content))
+                    .or_else(|| e.content.map(|c| clean_text(&c.body.unwrap_or_default())));
+                let link = e.links.first().map(|l| l.href.clone());
+                Some(NewsItem::new(clean_text(&title), "RSS".into()).with_desc(desc).with_link(link))
+            }).collect();
+        Ok(items)
     }
 
-    fn parse_rss(&self, bytes: &[u8]) -> Result<Vec<NewsItem>, FetchError> {
-        let feed = feed_rs::parser::parse(bytes).map_err(|e| FetchError::Parse(e.to_string()))?;
-
-        let mut items: Vec<NewsItem> = feed.entries.into_iter()
-            .filter_map(|entry| {
-                let title = entry.title?;
-                let cleaned = clean_text(&title.content);
-                if cleaned.is_empty() || is_junk(&cleaned) { return None; }
-
-                let link = entry.links.first().map(|l| l.href.clone());
-                let time_str = entry.published.or(entry.updated)
-                    .map(|dt| dt.with_timezone(&Local).format("%H:%M").to_string())
-                    .unwrap_or_else(|| "--:--".to_string());
-
-                Some(NewsItem::new(cleaned, time_str).with_link(link))
-            })
-            .take(limits::MAX_ITEMS_PER_SOURCE)
-            .collect();
-
+    async fn fetch_telegram(&self, url: &str) -> Result<Vec<NewsItem>, FetchError> {
+        let html = self.client.get(url).send().await?.text().await?;
+        let document = Html::parse_document(&html);
+        let mut items = Vec::new();
+        for el in document.select(&self.tg_wrap_selector).collect::<Vec<_>>().into_iter().rev() {
+            if items.len() >= limits::MAX_ITEMS_PER_SOURCE { break; }
+            if let Some(txt_el) = el.select(&self.tg_text_selector).next() {
+                let cleaned = clean_text(&txt_el.text().collect::<String>());
+                if is_junk(&cleaned) { continue; }
+                let mut time = "--:--".to_string();
+                let mut link = None;
+                if let Some(d) = el.select(&self.tg_date_selector).next() {
+                    time = d.text().collect();
+                    link = d.value().attr("href").map(|s| s.to_string());
+                }
+                items.push(NewsItem::new(cleaned, time).with_link(link));
+            }
+        }
         if items.is_empty() { return Err(FetchError::Empty); }
         items.reverse();
         Ok(items)
     }
-
-    fn check_status(&self, status: &StatusCode) -> Result<(), FetchError> {
-        match *status {
-            StatusCode::OK => Ok(()),
-            StatusCode::TOO_MANY_REQUESTS => Err(FetchError::RateLimited),
-            StatusCode::FORBIDDEN => Err(FetchError::Forbidden),
-            StatusCode::NOT_FOUND => Err(FetchError::NotFound),
-            _ => Ok(()),
-        }
-    }
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// HTML FORMATTING
+// ═══════════════════════════════════════════════════════════════════
+
 pub fn format_results(source_name: &str, items: &[NewsItem]) -> String {
-    let mut output = format!("🏴 *{}*\n", escape_markdown(source_name));
-    for item in items.iter() {
-        let text = truncate_text(&item.title, limits::MAX_TEXT_LENGTH);
+    // Используем HTML теги
+    let mut output = format!("<b>🏴 {}</b>\n", escape_html(source_name));
+    for item in items {
+        let title_clean = truncate_text(&item.title, 150);
 
-        output.push_str(&format!("\n▪️ {}\n", escape_markdown(&text)));
-        output.push_str("   └ 🕷 `");
-        output.push_str(&escape_markdown(&item.time_str));
-        output.push_str("`");
+        // Для цен выделяем жирным
+        output.push_str(&format!("\n▪️ <b>{}</b>", escape_html(&title_clean)));
 
+        // Описание показываем, только если это не цена (т.к. для цены мы description обнулили)
+        if let Some(ref d) = item.description {
+            let desc_clean = truncate_text(d, 200);
+            if !desc_clean.is_empty() && desc_clean != title_clean {
+                output.push_str(&format!("\n   <i>{}</i>", escape_html(&desc_clean)));
+            }
+        }
+        output.push_str(&format!("\n   └ <code>{}</code>", escape_html(&item.time_str)));
+
+        // Компактная ссылка
         if let Some(link) = &item.link {
-            output.push_str(&format!("  ⛓️ [Link]({})", link));
+            output.push_str(&format!(" <a href=\"{}\">[Link]</a>", link));
         }
         output.push('\n');
     }
@@ -251,12 +216,12 @@ pub fn format_results(source_name: &str, items: &[NewsItem]) -> String {
 }
 
 pub fn format_error(source_name: &str, error: &FetchError) -> String {
-    format!("🕸 *{}*: {}\n", escape_markdown(source_name), error)
+    format!("<b>🕸 {}:</b> {}\n", escape_html(source_name), error)
 }
 
-fn escape_markdown(text: &str) -> String {
-    text.replace('*', "\\*").replace('_', "\\_").replace('[', "\\[")
-        .replace(']', "\\]").replace('`', "\\`").replace('(', "\\(").replace(')', "\\)")
+fn escape_html(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
 }
-
-pub fn create_engine() -> Arc<NewsEngine> { NewsEngine::new() }

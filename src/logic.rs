@@ -60,7 +60,8 @@ pub async fn fetch_target(engine: Arc<NewsEngine>, target: Target) -> Aggregated
     let mut error_count = 0;
 
     for source in sources {
-        match engine.fetch_with_retry(source, 2).await {
+        // Используем fetch вместо fetch_with_retry, так как мы упростили network.rs
+        match engine.fetch(source).await {
             Ok(items) => {
                 content.push_str(&format_results(source.name, &items));
                 content.push('\n');
@@ -83,25 +84,16 @@ pub async fn fetch_target(engine: Arc<NewsEngine>, target: Target) -> Aggregated
 }
 
 /// Build help message
-pub fn build_help_message() -> &'static str {
-    r#"👁‍🗨 *LOGOS News Aggregator*
-
-*Categories:*
-/global — 🖤 Global (Reuters, Kommersant, AlJazeera)
-/war — 🤍 War (DeepState, TASS, Liveuamap)
-/market — 🏴 Market (Bloomberg, MarketTwits, Tree)
-/commodities — 💀 Commodities (Gold, Oil)
-
-*Sources:*
-🖤 `/reuters` `/kommersant` `/aljazeera`
-🤍 `/deepstate` `/tass` `/liveuamap`
-🏴 `/bloomberg` `/markettwits` `/tree`
-💀 `/gold` `/oil`
-
-*System:*
-/start, /help — Info
-
-_Rust 🦀_"#
+pub fn build_help_message() -> String {
+    format!(
+        "👁‍🗨 *LOGOS News Aggregator*\n\n\
+        *Categories:*\n\
+        /global — 🖤 Global\n\
+        /war — 🤍 War\n\
+        /market — 🏴 Market\n\
+        /commodities — ✟ ANCIENT DUST\n\n\
+        _Order out of Chaos_"
+    )
 }
 
 /// Build summary line
@@ -120,31 +112,13 @@ pub mod routes {
     /// Map command string to target
     pub fn resolve_command(cmd: &str) -> Option<Target> {
         match cmd.to_lowercase().as_str() {
-            // Categories
             "global" => Some(Target::Category(Category::Global)),
             "war" => Some(Target::Category(Category::War)),
             "market" => Some(Target::Category(Category::Market)),
             "commodities" => Some(Target::Category(Category::Commodities)),
-
-            // Individual sources - Global
             "reuters" => Some(Target::Source("Reuters")),
-            "kommersant" => Some(Target::Source("Kommersant")),
-            "aljazeera" => Some(Target::Source("AlJazeera")),
-
-            // Individual sources - War
-            "deepstate" => Some(Target::Source("DeepState")),
-            "tass" => Some(Target::Source("TASS")),
-            "liveuamap" => Some(Target::Source("Liveuamap")),
-
-            // Individual sources - Market
-            "bloomberg" => Some(Target::Source("Bloomberg")),
-            "markettwits" => Some(Target::Source("MarketTwits")),
-            "tree" => Some(Target::Source("TreeOfAlpha")),
-
-            // Individual sources - Commodities
             "gold" => Some(Target::Source("Gold")),
             "oil" => Some(Target::Source("Oil")),
-
             _ => None,
         }
     }
