@@ -1,5 +1,4 @@
 //! LOGOS - High-performance Telegram News Aggregator
-//! Architecture: Modular async design with Arc-based shared state
 
 mod consts;
 mod logic;
@@ -15,7 +14,6 @@ use teloxide::prelude::*;
 use teloxide::types::ParseMode;
 use teloxide::utils::command::BotCommands;
 
-/// Bot commands enumeration with automatic parsing
 #[derive(BotCommands, Clone, Debug)]
 #[command(rename_rule = "lowercase", description = "Available commands:")]
 enum Command {
@@ -34,25 +32,11 @@ enum Command {
     #[command(description = "✟ Ancient Dust")]
     Commodities,
 
-    // Individual source commands
+    // Individual sources
     #[command(description = "Reuters NewsData")]
     Reuters,
-    #[command(description = "Kommersant feed")]
-    Kommersant,
-    #[command(description = "AlJazeera feed")]
-    Aljazeera,
-    #[command(description = "DeepState updates")]
-    Deepstate,
-    #[command(description = "TASS feed")]
-    Tass,
-    #[command(description = "Liveuamap feed")]
-    Liveuamap,
-    #[command(description = "Bloomberg breaking")]
-    Bloomberg,
-    #[command(description = "MarketTwits feed")]
-    Markettwits,
-    #[command(description = "Tree of Alpha feed")]
-    Tree,
+    #[command(description = "Yahoo Politics")]
+    Yahoo,
     #[command(description = "Gold price")]
     Gold,
     #[command(description = "Oil price")]
@@ -68,14 +52,7 @@ impl Command {
             Command::Market => "market",
             Command::Commodities => "commodities",
             Command::Reuters => "reuters",
-            Command::Kommersant => "kommersant",
-            Command::Aljazeera => "aljazeera",
-            Command::Deepstate => "deepstate",
-            Command::Tass => "tass",
-            Command::Liveuamap => "liveuamap",
-            Command::Bloomberg => "bloomberg",
-            Command::Markettwits => "markettwits",
-            Command::Tree => "tree",
+            Command::Yahoo => "yahoopolitics", // Updated mapping
             Command::Gold => "gold",
             Command::Oil => "oil",
         };
@@ -117,7 +94,7 @@ async fn handle_command(
 
     if matches!(cmd, Command::Start | Command::Help) {
         bot.send_message(chat_id, build_help_message())
-            .parse_mode(ParseMode::Markdown) // Help оставляем в MD, там нет сложных символов
+            .parse_mode(ParseMode::Markdown)
             .await?;
         return Ok(());
     }
@@ -133,24 +110,21 @@ async fn handle_command(
 
     let result = fetch_target(engine, target).await;
 
-    // Используем HTML для основного вывода
     let mut response = format!("<b>{}</b>\n\n{}", result.header, result.content);
     response.push_str(&build_summary(&result));
 
     let _ = bot.delete_message(chat_id, loading_msg.id).await;
 
-
-    // Send results
     if response.len() > 4000 {
         for chunk in split_message(&response, 4000) {
             bot.send_message(chat_id, chunk)
-                .parse_mode(ParseMode::Html) // <--- ВОТ ТУТ
+                .parse_mode(ParseMode::Html)
                 .disable_web_page_preview(true)
                 .await?;
         }
     } else {
         bot.send_message(chat_id, response)
-            .parse_mode(ParseMode::Html) // <--- И ТУТ
+            .parse_mode(ParseMode::Html)
             .disable_web_page_preview(true)
             .await?;
     }
@@ -158,37 +132,23 @@ async fn handle_command(
     Ok(())
 }
 
-/// Split message into chunks safely handling UTF-8 boundaries
 fn split_message(text: &str, max_len: usize) -> Vec<&str> {
     let mut chunks = Vec::new();
     let mut start = 0;
-
     while start < text.len() {
         let mut end = start + max_len;
-
-        // 1. Check bounds
         if end >= text.len() {
             chunks.push(&text[start..]);
             break;
         }
-
-        // 2. IMPORTANT: Backtrack to valid UTF-8 char boundary
-        while !text.is_char_boundary(end) {
-            end -= 1;
-        }
-
-        // 3. Try to break at newline to avoid cutting sentences
+        while !text.is_char_boundary(end) { end -= 1; }
         let search_range = &text[start..end];
         if let Some(last_newline) = search_range.rfind('\n') {
             let split_idx = start + last_newline + 1;
-            if split_idx > start {
-                end = split_idx;
-            }
+            if split_idx > start { end = split_idx; }
         }
-
         chunks.push(&text[start..end]);
         start = end;
     }
-
     chunks
 }

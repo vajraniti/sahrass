@@ -3,7 +3,7 @@
 use std::fmt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SourceType { Rss, TelegramHtml, NewsData }
+pub enum SourceType { Rss, TelegramHtml, NewsData, Html }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Category { Global, War, Market, Commodities }
@@ -41,8 +41,9 @@ impl Source {
 }
 
 pub static SOURCES: &[Source] = &[
-    // Global - Reuters (NewsData)
+    // Global
     Source::new("Reuters", "reuters", SourceType::NewsData, Category::Global, "en"),
+    Source::new("YahooPolitics", "https://news.yahoo.com/rss/politics", SourceType::Rss, Category::Global, "en"),
     Source::new("Kommersant", "https://t.me/s/kommersant", SourceType::TelegramHtml, Category::Global, "ru"),
     Source::new("AlJazeera", "https://www.aljazeera.com/xml/rss/all.xml", SourceType::Rss, Category::Global, "en"),
 
@@ -56,15 +57,11 @@ pub static SOURCES: &[Source] = &[
     Source::new("MarketTwits", "https://t.me/s/markettwits", SourceType::TelegramHtml, Category::Market, "ru"),
     Source::new("Tree", "https://t.me/s/TreeNewsFeed", SourceType::TelegramHtml, Category::Market, "en"),
 
-    // Commodities (Цены - пробуем вытащить цифры через RSS)
-    // Золото: Ищем точное совпадение цены
-    Source::new("Gold", "https://news.google.com/rss/search?q=XAU+USD+price+when:1d&hl=en-US&gl=US&ceid=US:en", SourceType::Rss, Category::Commodities, "en"),
-    // Лукойл/Роснефть: Ищем цену акций
-    Source::new("Oil", "https://news.google.com/rss/search?q=Lukoil+Rosneft+share+price+when:1d&hl=en-US&gl=US&ceid=US:en", SourceType::Rss, Category::Commodities, "en"),
+    // Commodities - Direct HTML Scraping
+    Source::new("Gold", "https://ru.investing.com/commodities/gold", SourceType::Html, Category::Commodities, "ru"),
+    Source::new("Oil", "https://oilprice.com/futures/wti", SourceType::Html, Category::Commodities, "en"),
 ];
 
-// ... (find_source, headers, limits остаются как были, скопируй если нужно, но они есть в старом коде)
-// Обязательно добавь эти функции если заменяешь файл целиком:
 #[inline]
 pub fn find_source(name: &str) -> Option<&'static Source> {
     SOURCES.iter().find(|s| s.name.eq_ignore_ascii_case(name))
