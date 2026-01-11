@@ -1,5 +1,4 @@
 //! Static source configuration with zero-allocation design.
-//! All strings are &'static str to avoid lifetime complexity.
 
 use std::fmt;
 
@@ -50,88 +49,41 @@ impl Source {
     }
 }
 
-/// Static source registry - compile-time constant, zero heap allocation
+/// Static source registry
 pub static SOURCES: &[Source] = &[
     // ═══════════════════════════════════════════════════════════════════
     // GLOBAL NEWS (🖤)
     // ═══════════════════════════════════════════════════════════════════
-    Source::new(
-        "RBC",
-        "https://t.me/s/rbc_news",
-        SourceType::TelegramHtml,
-        Category::Global,
-    ),
-    Source::new(
-        "Kommersant",
-        "https://t.me/s/kommersant",
-        SourceType::TelegramHtml,
-        Category::Global,
-    ),
-    Source::new(
-        "AlJazeera",
-        "https://t.me/s/aljazeeraenglishnews",
-        SourceType::TelegramHtml,
-        Category::Global,
-    ),
+    Source::new("RBC", "https://t.me/s/rbc_news", SourceType::TelegramHtml, Category::Global),
+    Source::new("Kommersant", "https://t.me/s/kommersant", SourceType::TelegramHtml, Category::Global),
+    Source::new("AlJazeera", "https://t.me/s/aljazeeraenglishnews", SourceType::TelegramHtml, Category::Global),
 
     // ═══════════════════════════════════════════════════════════════════
     // WAR / GEOPOLITICS (🤍)
     // ═══════════════════════════════════════════════════════════════════
-    Source::new(
-        "DeepState",
-        "https://t.me/s/DeepStateUA",
-        SourceType::TelegramHtml,
-        Category::War,
-    ),
-    Source::new(
-        "TASS",
-        "https://t.me/s/tass_agency",
-        SourceType::TelegramHtml,
-        Category::War,
-    ),
-    Source::new(
-        "Monitor",
-        "https://t.me/s/ukraine_monitor",
-        SourceType::TelegramHtml,
-        Category::War,
-    ),
+    Source::new("DeepState", "https://t.me/s/DeepStateUA", SourceType::TelegramHtml, Category::War),
+    Source::new("TASS", "https://t.me/s/tass_agency", SourceType::TelegramHtml, Category::War),
+    // Changed Monitor -> UkraineNow because Monitor is often restricted in Web View
+    Source::new("UkraineNow", "https://t.me/s/u_now", SourceType::TelegramHtml, Category::War),
 
     // ═══════════════════════════════════════════════════════════════════
     // MARKET / FINANCE (🏴)
     // ═══════════════════════════════════════════════════════════════════
-    Source::new(
-        "Bloomberg",
-        "https://t.me/s/bbbreaking",
-        SourceType::TelegramHtml,
-        Category::Market,
-    ),
-    Source::new(
-        "MarketTwits",
-        "https://t.me/s/markettwits",
-        SourceType::TelegramHtml,
-        Category::Market,
-    ),
-    Source::new(
-        "TreeOfAlpha",
-        "https://t.me/s/TreeNewsFeed",
-        SourceType::TelegramHtml,
-        Category::Market,
-    ),
+    Source::new("Bloomberg", "https://t.me/s/bbbreaking", SourceType::TelegramHtml, Category::Market),
+    Source::new("MarketTwits", "https://t.me/s/markettwits", SourceType::TelegramHtml, Category::Market),
+    Source::new("TreeOfAlpha", "https://t.me/s/TreeNewsFeed", SourceType::TelegramHtml, Category::Market),
 ];
 
-/// Lookup source by name (case-insensitive match)
 #[inline]
 pub fn find_source(name: &str) -> Option<&'static Source> {
     SOURCES.iter().find(|s| s.name.eq_ignore_ascii_case(name))
 }
 
-/// Get all sources in a category
 #[inline]
 pub fn sources_by_category(category: Category) -> impl Iterator<Item = &'static Source> {
     SOURCES.iter().filter(move |s| s.category == category)
 }
 
-/// HTTP headers for stealth mode
 pub mod headers {
     pub const USER_AGENT: &str =
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
@@ -143,14 +95,12 @@ pub mod headers {
     pub const ACCEPT_ENCODING: &str = "gzip, deflate, br";
 }
 
-/// CSS selectors for Telegram HTML parsing
 pub mod selectors {
     pub const TG_MESSAGE_WRAP: &str = ".tgme_widget_message_wrap";
     pub const TG_MESSAGE_TEXT: &str = ".tgme_widget_message_text";
     pub const TG_MESSAGE_DATE: &str = ".tgme_widget_message_date";
 }
 
-/// Limits and thresholds
 pub mod limits {
     pub const MAX_ITEMS_PER_SOURCE: usize = 5;
     pub const MAX_TEXT_LENGTH: usize = 280;

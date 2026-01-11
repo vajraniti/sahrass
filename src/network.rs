@@ -1,38 +1,33 @@
 //! Hybrid fetching engine with RSS and Telegram HTML support.
-//! Implements stealth mode with browser-like headers.
 
 use crate::consts::{headers, limits, selectors, Source, SourceType};
-use crate::utils::{clean_text, fibonacci_delay, progressive_delay, truncate_text};
+use crate::utils::{clean_text, fibonacci_delay, progressive_delay, truncate_text, is_junk};
+use crate::translate::translate_text;
 use reqwest::{Client, StatusCode};
 use scraper::{Html, Selector};
 use std::sync::Arc;
 use std::time::Duration;
 use thiserror::Error;
-use chrono::{Local};
+use chrono::Local;
+use futures::future::join_all;
 
 /// Network operation errors
 #[derive(Error, Debug)]
 pub enum FetchError {
     #[error("HTTP error: {0}")]
     Http(#[from] reqwest::Error),
-
     #[error("Rate limited (429)")]
     RateLimited,
-
     #[error("Forbidden (403)")]
     Forbidden,
-
     #[error("Not found (404)")]
     NotFound,
-
     #[error("Parse error: {0}")]
     Parse(String),
-
     #[error("Empty response")]
     Empty,
 }
 
-/// News item from any source
 #[derive(Debug, Clone)]
 pub struct NewsItem {
     pub title: String,
@@ -42,20 +37,14 @@ pub struct NewsItem {
 
 impl NewsItem {
     fn new(title: String, time_str: String) -> Self {
-        Self {
-            title,
-            link: None,
-            time_str,
-        }
+        Self { title, link: None, time_str }
     }
-
     fn with_link(mut self, link: Option<String>) -> Self {
         self.link = link;
         self
     }
 }
 
-/// High-performance news fetching engine
 pub struct NewsEngine {
     client: Client,
     tg_wrap_selector: Selector,
@@ -64,7 +53,6 @@ pub struct NewsEngine {
 }
 
 impl NewsEngine {
-    /// Create new engine with optimized HTTP client
     pub fn new() -> Arc<Self> {
         let client = Client::builder()
             .user_agent(headers::USER_AGENT)
@@ -79,96 +67,90 @@ impl NewsEngine {
 
         Arc::new(Self {
             client,
-            tg_wrap_selector: Selector::parse(selectors::TG_MESSAGE_WRAP)
-                .expect("Invalid TG wrap selector"),
-            tg_text_selector: Selector::parse(selectors::TG_MESSAGE_TEXT)
-                .expect("Invalid TG text selector"),
-            tg_date_selector: Selector::parse(selectors::TG_MESSAGE_DATE)
-                .expect("Invalid TG date selector"),
+            tg_wrap_selector: Selector::parse(selectors::TG_MESSAGE_WRAP).expect("Invalid selector"),
+            tg_text_selector: Selector::parse(selectors::TG_MESSAGE_TEXT).expect("Invalid selector"),
+            tg_date_selector: Selector::parse(selectors::TG_MESSAGE_DATE).expect("Invalid selector"),
         })
     }
 
-    /// Fetch news from source with automatic type detection
     pub async fn fetch(&self, source: &Source) -> Result<Vec<NewsItem>, FetchError> {
-        // Apply stealth delay
         fibonacci_delay(limits::BASE_DELAY_MS).await;
 
-        match source.source_type {
-            SourceType::TelegramHtml => self.fetch_telegram(source.url).await,
-            SourceType::Rss => self.fetch_rss(source.url).await,
+        let mut items = match source.source_type {
+            SourceType::TelegramHtml => self.fetch_telegram(source.url).await?,
+            SourceType::Rss => self.fetch_rss(source.url).await?,
+        };
+
+        // Parallel Translation
+        let mut tasks = Vec::new();
+        for item in &items {
+            let client = self.client.clone();
+            let text = item.title.clone();
+
+            tasks.push(tokio::spawn(async move {
+                // Translate to Russian
+                match translate_text(&client, &text, "ru").await {
+                    Ok(t) => t,
+                    Err(_) => text, // Fallback to original
+                }
+            }));
         }
+
+        let results = join_all(tasks).await;
+
+        for (i, res) in results.into_iter().enumerate() {
+            if let Ok(translated) = res {
+                items[i].title = translated;
+            }
+        }
+
+        Ok(items)
     }
 
-    /// Fetch with retry logic
-    pub async fn fetch_with_retry(
-        &self,
-        source: &Source,
-        max_attempts: u32,
-    ) -> Result<Vec<NewsItem>, FetchError> {
+    pub async fn fetch_with_retry(&self, source: &Source, max_attempts: u32) -> Result<Vec<NewsItem>, FetchError> {
         let mut last_error = FetchError::Empty;
-
         for attempt in 0..max_attempts {
-            if attempt > 0 {
-                log::warn!("Retry {} for {}", attempt, source.name);
-                progressive_delay(limits::BASE_DELAY_MS, attempt).await;
-            }
-
+            if attempt > 0 { progressive_delay(limits::BASE_DELAY_MS, attempt).await; }
             match self.fetch(source).await {
                 Ok(items) => return Ok(items),
                 Err(FetchError::RateLimited) => {
-                    log::warn!("Rate limited on {}, backing off", source.name);
                     progressive_delay(2000, attempt + 1).await;
                     last_error = FetchError::RateLimited;
                 }
-                Err(e) => {
-                    last_error = e;
-                }
+                Err(e) => last_error = e,
             }
         }
-
         Err(last_error)
     }
 
-    /// Fetch Telegram web mirror (HTML scraping)
     async fn fetch_telegram(&self, url: &str) -> Result<Vec<NewsItem>, FetchError> {
-        let response = self.client
-            .get(url)
+        let response = self.client.get(url)
             .header("Accept", headers::ACCEPT_HTML)
             .header("Accept-Language", headers::ACCEPT_LANG)
-            .header("Accept-Encoding", headers::ACCEPT_ENCODING)
-            .header("Cache-Control", "no-cache")
-            .header("Pragma", "no-cache")
-            .header("Sec-Fetch-Dest", "document")
-            .header("Sec-Fetch-Mode", "navigate")
-            .header("Sec-Fetch-Site", "none")
             .header("Sec-Fetch-User", "?1")
             .header("Upgrade-Insecure-Requests", "1")
-            .send()
-            .await?;
+            .send().await?;
 
         self.check_status(&response.status())?;
-
         let html = response.text().await?;
         self.parse_telegram_html(&html)
     }
 
-    /// Parse Telegram HTML structure
     fn parse_telegram_html(&self, html: &str) -> Result<Vec<NewsItem>, FetchError> {
         let document = Html::parse_document(html);
         let mut items = Vec::new();
 
-        // Telegram Web shows messages Top -> Bottom (Old -> New).
-        // We take the last N items to get the newest ones.
-
+        // Select ALL message wraps available on the page
         let elements: Vec<_> = document.select(&self.tg_wrap_selector).collect();
-        let start_index = if elements.len() > limits::MAX_ITEMS_PER_SOURCE {
-            elements.len() - limits::MAX_ITEMS_PER_SOURCE
-        } else {
-            0
-        };
 
-        for element in elements.into_iter().skip(start_index) {
-            // Extract text
+        // Iterate backwards (from Newest to Oldest)
+        // We keep looking until we fill our buffer (MAX_ITEMS_PER_SOURCE)
+        // This solves the problem where the last 10 posts are junk/links
+        for element in elements.into_iter().rev() {
+            if items.len() >= limits::MAX_ITEMS_PER_SOURCE {
+                break;
+            }
+
             let text = if let Some(text_el) = element.select(&self.tg_text_selector).next() {
                 text_el.text().collect::<String>()
             } else {
@@ -176,11 +158,12 @@ impl NewsEngine {
             };
 
             let cleaned = clean_text(&text);
-            if cleaned.is_empty() {
+
+            // Apply Filters
+            if cleaned.is_empty() || is_junk(&cleaned) {
                 continue;
             }
 
-            // Extract link and time from date element
             let mut link = None;
             let mut time_str = "--:--".to_string();
 
@@ -191,99 +174,70 @@ impl NewsEngine {
                     time_str = raw_time;
                 }
             }
-
             items.push(NewsItem::new(cleaned, time_str).with_link(link));
         }
 
         if items.is_empty() {
+            // Log that we found elements but filtered them all, or found none
+            // This helps distinguish between "Banned" (0 elements) and "All Junk"
             return Err(FetchError::Empty);
         }
 
-        Ok(items)
-    }
-
-    /// Fetch RSS/XML feed
-    async fn fetch_rss(&self, url: &str) -> Result<Vec<NewsItem>, FetchError> {
-        let response = self.client
-            .get(url)
-            .header("Accept", headers::ACCEPT_RSS)
-            .header("Accept-Language", headers::ACCEPT_LANG)
-            .header("Accept-Encoding", headers::ACCEPT_ENCODING)
-            .send()
-            .await?;
-
-        self.check_status(&response.status())?;
-
-        let bytes = response.bytes().await?;
-        self.parse_rss(&bytes)
-    }
-
-    /// Parse RSS/Atom feed
-    fn parse_rss(&self, bytes: &[u8]) -> Result<Vec<NewsItem>, FetchError> {
-        let feed = feed_rs::parser::parse(bytes)
-            .map_err(|e| FetchError::Parse(e.to_string()))?;
-
-        let mut items: Vec<NewsItem> = feed
-            .entries
-            .into_iter()
-            .take(limits::MAX_ITEMS_PER_SOURCE)
-            .filter_map(|entry| {
-                let title = entry.title?;
-                let cleaned = clean_text(&title.content);
-
-                if cleaned.is_empty() {
-                    return None;
-                }
-
-                let link = entry.links.first().map(|l| l.href.clone());
-
-                // Format time: HH:MM
-                let time_str = entry.published
-                    .or(entry.updated)
-                    .map(|dt| dt.with_timezone(&Local).format("%H:%M").to_string())
-                    .unwrap_or_else(|| "--:--".to_string());
-
-                Some(NewsItem::new(cleaned, time_str).with_link(link))
-            })
-            .collect();
-
-        if items.is_empty() {
-            return Err(FetchError::Empty);
-        }
-
-        // Reverse to get Chronological Order (Oldest -> Newest)
+        // We collected [Newest, 2nd Newest, ...].
+        // Reverse to get [Oldest, ..., Newest] for the chat
         items.reverse();
 
         Ok(items)
     }
 
-    /// Check HTTP status and convert to error
-    #[inline]
+    async fn fetch_rss(&self, url: &str) -> Result<Vec<NewsItem>, FetchError> {
+        let response = self.client.get(url).header("Accept", headers::ACCEPT_RSS).send().await?;
+        self.check_status(&response.status())?;
+        let bytes = response.bytes().await?;
+        self.parse_rss(&bytes)
+    }
+
+    fn parse_rss(&self, bytes: &[u8]) -> Result<Vec<NewsItem>, FetchError> {
+        let feed = feed_rs::parser::parse(bytes).map_err(|e| FetchError::Parse(e.to_string()))?;
+
+        let mut items: Vec<NewsItem> = feed.entries.into_iter()
+            .filter_map(|entry| {
+                let title = entry.title?;
+                let cleaned = clean_text(&title.content);
+                if cleaned.is_empty() || is_junk(&cleaned) { return None; }
+
+                let link = entry.links.first().map(|l| l.href.clone());
+                let time_str = entry.published.or(entry.updated)
+                    .map(|dt| dt.with_timezone(&Local).format("%H:%M").to_string())
+                    .unwrap_or_else(|| "--:--".to_string());
+
+                Some(NewsItem::new(cleaned, time_str).with_link(link))
+            })
+            .take(limits::MAX_ITEMS_PER_SOURCE)
+            .collect();
+
+        if items.is_empty() { return Err(FetchError::Empty); }
+        items.reverse();
+        Ok(items)
+    }
+
     fn check_status(&self, status: &StatusCode) -> Result<(), FetchError> {
         match *status {
             StatusCode::OK => Ok(()),
             StatusCode::TOO_MANY_REQUESTS => Err(FetchError::RateLimited),
             StatusCode::FORBIDDEN => Err(FetchError::Forbidden),
             StatusCode::NOT_FOUND => Err(FetchError::NotFound),
-            _ => Ok(()), // Let other statuses through
+            _ => Ok(()),
         }
     }
 }
 
-/// Format fetch results for Telegram message (Gothic Style V2)
 pub fn format_results(source_name: &str, items: &[NewsItem]) -> String {
-    // Header
     let mut output = format!("🏴 *{}*\n", escape_markdown(source_name));
-
     for item in items.iter() {
         let text = truncate_text(&item.title, limits::MAX_TEXT_LENGTH);
 
-        // Block 1: The Content
-        // ▪️ Some news text goes here...
         output.push_str(&format!("\n▪️ {}\n", escape_markdown(&text)));
-
-        // Block 2: The Metadata Footer (Indented)
-        // └ 🕷 14:05 ⛓️ Link
         output.push_str("   └ 🕷 `");
         output.push_str(&escape_markdown(&item.time_str));
         output.push_str("`");
@@ -291,32 +245,18 @@ pub fn format_results(source_name: &str, items: &[NewsItem]) -> String {
         if let Some(link) = &item.link {
             output.push_str(&format!("  ⛓️ [Link]({})", link));
         }
-
         output.push('\n');
     }
-
     output
 }
 
-/// Format error for Telegram message
 pub fn format_error(source_name: &str, error: &FetchError) -> String {
     format!("🕸 *{}*: {}\n", escape_markdown(source_name), error)
 }
 
-/// Escape special Markdown characters for Telegram
 fn escape_markdown(text: &str) -> String {
-    text.replace('*', "\\*")
-        .replace('_', "\\_")
-        .replace('[', "\\[")
-        .replace(']', "\\]")
-        .replace('`', "\\`")
-        .replace('(', "\\(")
-        .replace(')', "\\)")
-    // Telegram MarkdownV2 requires escaping these too usually, but for standard Markdown
-    // in Teloxide, the above are the critical ones.
+    text.replace('*', "\\*").replace('_', "\\_").replace('[', "\\[")
+        .replace(']', "\\]").replace('`', "\\`").replace('(', "\\(").replace(')', "\\)")
 }
 
-/// Convenience function to create Arc-wrapped engine
-pub fn create_engine() -> Arc<NewsEngine> {
-    NewsEngine::new()
-}
+pub fn create_engine() -> Arc<NewsEngine> { NewsEngine::new() }

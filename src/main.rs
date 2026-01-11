@@ -8,6 +8,7 @@ mod consts;
 mod logic;
 mod network;
 mod utils;
+mod translate;
 
 use crate::logic::{build_help_message, build_summary, fetch_target, routes, Target};
 use crate::network::NewsEngine;
