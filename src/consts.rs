@@ -56,7 +56,7 @@ pub static SOURCES: &[Source] = &[
     // ═══════════════════════════════════════════════════════════════════
     Source::new("RBC", "https://t.me/s/rbc_news", SourceType::TelegramHtml, Category::Global),
     Source::new("Kommersant", "https://t.me/s/kommersant", SourceType::TelegramHtml, Category::Global),
-    Source::new("AlJazeera", "https://t.me/s/aljazeeraenglishnews", SourceType::TelegramHtml, Category::Global),
+    Source::new("AlJazeera", "https://www.aljazeera.com/xml/rss/all.xml", SourceType::Rss, Category::Global),
 
     // ═══════════════════════════════════════════════════════════════════
     // WAR / GEOPOLITICS (🤍)

@@ -28,17 +28,32 @@ pub fn clean_text(text: &str) -> String {
 }
 
 /// Check if the text is useless system message or just a link
+/// Check if the text is useless system message, link, or unwanted topic (sports)
 pub fn is_junk(text: &str) -> bool {
     let t = text.trim();
+    // Приводим к нижнему регистру для поиска ключевиков
+    let lower = t.to_lowercase();
 
-    // System messages
+    // 1. System messages
     if t.eq_ignore_ascii_case("Channel created")
         || t.eq_ignore_ascii_case("Account created")
         || t.contains("Channel photo updated") {
         return true;
     }
 
-    // Bare links (start with http, no spaces, short-ish)
+    // 2. Content Filters (Sports & Entertainment Noise)
+    // Добавляй сюда любые слова, которые тебе не нужны.
+    let noise_keywords = [
+        "football", "soccer", "fifa", "uefa", "sport",
+        "champions league", "premier league", "cricket", "tennis",
+        "футбол", "спорт", "матч", "чемпионат"// на случай русских источников
+    ];
+
+    if noise_keywords.iter().any(|&k| lower.contains(k)) {
+        return true;
+    }
+
+    // 3. Bare links (start with http, no spaces, short-ish)
     // or specifically YouTube links without context
     if (t.starts_with("http") && !t.contains(' '))
         || (t.contains("youtu.be") && t.len() < 60) {
